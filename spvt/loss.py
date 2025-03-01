@@ -23,7 +23,7 @@ def compute_loss(args, model, x, z, k, buffer):
         x: State tensor (batch_size, state_dim) with cross-track and heading errors
         z: Perturbed latent input tensor (batch_size, latent_dim)
         k: Number of steps to simulate for verification and safety loss
-        buffer: Buffer for storing counter-examples
+        buffer: Buffer for storing hard examples
         
     Returns:
         tuple containing:
@@ -34,9 +34,9 @@ def compute_loss(args, model, x, z, k, buffer):
             - reg_loss: ReLU stability regularization loss
             - state_lp_loss: State-space Lipschitz regularization loss
             - latent_lp_loss: Latent-space Lipschitz regularization loss
-            - buffer: Updated counter-example buffer
+            - buffer: Updated hard example buffer
+            - added_indices: Indices of examples added to the buffer
     """
-    # Ensure k is large enough for prediction loss calculation
     assert k >= args.pred_loss_step, f'k should be at least args.pred_loss_step, but got k={k} and args.pred_loss_step={args.pred_loss_step}'
 
     # Simulate trajectory with bounded verification
@@ -58,11 +58,12 @@ def compute_loss(args, model, x, z, k, buffer):
     reg_loss = compute_reg(model)  # ReLU stability regularization
     lp_penalty_state, lp_penalty_latent = compute_lp_reg(model, z, x)  # Lipschitz regularization
     
-    # 5. Update counter-example buffer with hard examples
+    # 5. Update hard example buffer with difficult examples and track which were added
+    added_indices = []
     if args.buffer_criteria == 'safety_loss':
-        buffer.add_examples(x, safety_loss_items.detach(), violation_mask)
+        added_indices = buffer.add_examples(x, safety_loss_items.detach(), violation_mask)
     elif args.buffer_criteria == 'bound_gap':
-        buffer.add_examples(x, bound_gap.detach(), violation_mask)
+        added_indices = buffer.add_examples(x, bound_gap.detach(), violation_mask)
     
     # 6. Compute weighted total loss
     if args.buffer_criteria == 'safety_loss':
@@ -75,7 +76,7 @@ def compute_loss(args, model, x, z, k, buffer):
                   args.lambda_reg * reg_loss + 
                   args.lambda_lp * (lp_penalty_state + lp_penalty_latent))
     
-    return total_loss, pred_acc_loss, safety_loss, bound_gap_loss, reg_loss, lp_penalty_state, lp_penalty_latent, buffer
+    return total_loss, pred_acc_loss, safety_loss, bound_gap_loss, reg_loss, lp_penalty_state, lp_penalty_latent, buffer, added_indices
 
 def calc_bound_loss(args, model, x, z, y):
     """

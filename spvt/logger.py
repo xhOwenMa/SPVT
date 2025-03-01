@@ -3,6 +3,93 @@ from typing import Dict, Any
 import os
 from argparse import Namespace
 
+import time
+from colorama import Fore, Style, init
+
+init()
+
+class EpochInfoPrinter:
+    def __init__(self):
+        """Initialize the pretty logger for training outputs."""
+        self.timer = 0.0
+        
+    def print_epoch_header(self, epoch, total_epochs, k_value):
+        """Print a formatted header for the epoch."""
+        box_width = 80
+        separator = "=" * box_width
+        
+        print("\n" + separator)
+        print(f"{Fore.GREEN}EPOCH {epoch}/{total_epochs}{Style.RESET_ALL} - K={k_value}")
+        print(separator)
+        
+    def print_metrics_by_category(self, metrics_dict, box_width=80):
+        """
+        Print metrics organized by categories in a nicely formatted box.
+        
+        Args:
+            metrics_dict: Dictionary of dictionaries, where the top-level keys are category names
+                          and values are dictionaries of metrics in that category
+            box_width: Width of the box
+        """
+        separator = "-" * box_width
+        
+        for category, metrics in metrics_dict.items():
+            # Skip empty categories
+            if not metrics:
+                continue
+                
+            # Print category header
+            print(f"\n{Fore.YELLOW}{category}{Style.RESET_ALL}")
+            print(separator)
+            
+            # Find the longest metric name for alignment
+            max_name_length = max((len(name) for name in metrics.keys()), default=0)
+            
+            # Print each metric with aligned values
+            for name, value in metrics.items():
+                if isinstance(value, float):
+                    print(f"  {name:<{max_name_length+3}}: {value:.6f}")
+                else:
+                    print(f"  {name:<{max_name_length+3}}: {value}")
+        
+    def log_training_summary(self, epoch, total_epochs, k_value, losses, buffer_stats, params, epoch_time):
+        """
+        Log a comprehensive training summary after each epoch.
+        
+        Args:
+            epoch: Current epoch number
+            total_epochs: Total number of epochs
+            k_value: Current K value
+            losses: Dictionary of loss values
+            buffer_stats: Dictionary of buffer statistics
+            params: Dictionary of hyperparameters
+            epoch_time: Time taken for the epoch
+        """
+        # Update total training time
+        self.timer += epoch_time
+        hrs, rem = divmod(self.timer, 3600)
+        mins, secs = divmod(rem, 60)
+        
+        # Time metrics
+        time_metrics = {
+            "Epoch time": f"{int(epoch_time // 60)}m:{int(epoch_time % 60)}s",
+            "Total training time": f"{int(hrs):02d}h:{int(mins):02d}m:{int(secs):02d}s"
+        }
+        
+        # Organize metrics by category
+        metrics_by_category = {
+            "LOSS METRICS": losses,
+            "BUFFER STATISTICS": buffer_stats,
+            "HYPERPARAMETERS": params,
+            "TIME STATISTICS": time_metrics
+        }
+        
+        # Print metrics by category
+        self.print_metrics_by_category(metrics_by_category)
+        
+        # Print footer
+        print("\n" + "=" * 80)
+
 class Logger:
     def __init__(self, log_dir: str):
         """Initialize the logger."""
@@ -71,8 +158,6 @@ class Logger:
         self.close()
 
 
-import time
-
 class LossTracker:
     def __init__(self, logger, total_batches):
         self.logger = logger
@@ -118,21 +203,23 @@ class LossTracker:
                     f"LP State: {losses['state_lp_loss'].item():.4f} | "
                     f"LP Latent: {losses['latent_lp_loss'].item():.4f}")
 
-    def log_epoch_summary(self, epoch, start_time):
+    def log_epoch_summary(self, epoch, start_time, print_summary=True):
         avg_losses = {k: v / self.total_batches for k, v in self.epoch_losses.items()}
 
-        print(f"\nEpoch {epoch} Summary:")
-        print(f"Total loss: {avg_losses['loss/total']:.4f}")
-        print(f"Prediction loss: {avg_losses['loss/pred']:.4f}")
-        print(f"Bound gap loss: {avg_losses['loss/bound']:.4f}")
-        print(f"Batch safety loss: {avg_losses['loss/safety']:.4f}")
-        print(f"reg loss: {avg_losses['loss/reg']:.4f}")
-        print(f"lp state loss: {avg_losses['loss/state_lp']:.4f}")
-        print(f"lp latent loss: {avg_losses['loss/latent_lp']:.4f}")
+        if print_summary:
+            print(f"\nEpoch {epoch} Summary:")
+            print(f"Total loss: {avg_losses['loss/total']:.4f}")
+            print(f"Prediction loss: {avg_losses['loss/pred']:.4f}")
+            print(f"Bound gap loss: {avg_losses['loss/bound']:.4f}")
+            print(f"Batch safety loss: {avg_losses['loss/safety']:.4f}")
+            print(f"reg loss: {avg_losses['loss/reg']:.4f}")
+            print(f"lp state loss: {avg_losses['loss/state_lp']:.4f}")
+            print(f"lp latent loss: {avg_losses['loss/latent_lp']:.4f}")
 
-        epoch_time = time.time() - start_time
-        self.timer += epoch_time
-        self._log_time(epoch_time)
+            epoch_time = time.time() - start_time
+            self.timer += epoch_time
+            self._log_time(epoch_time)
+            
         self.logger.log_metrics(avg_losses, step=epoch)
         
         return avg_losses['loss/safety'], avg_losses['loss/pred']

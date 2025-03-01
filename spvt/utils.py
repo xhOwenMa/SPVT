@@ -85,8 +85,6 @@ def prepare_train(args):
     model = create_bounded_module(args, model_ori)
     model.train()
 
-    # ibp_init(model_ori, model)
-
     # 3. create optimizer
     controller_params = [p for name, p in model.named_parameters() if 'controller' in name and p.requires_grad]
     optimizer = torch.optim.Adam(controller_params, lr=args.lr, betas=(args.beta1, args.beta2))
@@ -95,10 +93,27 @@ def prepare_train(args):
 
     # 4. create dataloader
     try:
-        state_data = torch.load(f'{parent_dir}/data/states.pt')
-        dataloader = torch.utils.data.DataLoader(state_data, batch_size=args.batch_size, shuffle=True)
+        state_data = torch.load(f'{parent_dir}/data/{args.exp}_states.pt')
+        dataloader = torch.utils.data.DataLoader(
+            state_data, 
+            batch_size=args.batch_size, 
+            shuffle=True,
+            drop_last=False
+        )
     except FileNotFoundError:
-        raise FileNotFoundError(f"State data not found in {parent_dir}/data/states.pt")
+        print()
+        print('\033[91m===================STATE DATA NOT FOUND===================\033[0m')
+        print('randomly generating 1000 states...')
+        print('\033[93mWARNING: this is not enough data for training\033[0m')
+        cte = torch.rand(1000) * 100 - 50
+        he = torch.rand(1000) * 60 - 30
+        states = torch.stack([cte, he], dim=1)
+        dataloader = torch.utils.data.DataLoader(
+            states, 
+            batch_size=args.batch_size, 
+            shuffle=True,
+            drop_last=False
+        )
 
     # 5. create loss tracker
     loss_tracker = LossTracker(logger, len(dataloader))

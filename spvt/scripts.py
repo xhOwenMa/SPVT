@@ -36,7 +36,7 @@ class BatchSampler:
     
     def get_train_batch(self, args, state_batch, buffer):
         batch_size = state_batch.size(0)
-        if len(buffer) > batch_size:
+        if len(buffer) < batch_size:
             sampled_X = state_batch
         else:
             num_samples = int(self.batch_fraction * batch_size)
@@ -50,11 +50,11 @@ class BatchSampler:
 @dataclass
 class LossExample:
     """
-    Data class for storing examples in the counter-example buffer.
+    Data class for storing examples in the hard example buffer.
     
     Attributes:
         state: State tensor (cte, he)
-        loss: Loss value associated with this example
+        loss: float
         violated: Boolean indicating if this example violated safety constraints
     """
     state: torch.Tensor
@@ -68,7 +68,7 @@ class LossExample:
         """
         return self.loss > other.loss
 
-class CounterExampleBuffer:
+class HardExampleBuffer:
     """
     Buffer that stores hard examples and safety violations for improved training.
     
@@ -81,15 +81,25 @@ class CounterExampleBuffer:
     """
     def __init__(self, max_size: int = 4000):
         """
-        Initialize the counter example buffer.
+        Initialize the hard example buffer.
         
         Args:
             max_size: Maximum number of examples to store (default: 4000)
         """
         self.max_size = max_size
-        self.buffer: List[LossExample] = []  # Implemented as a min-heap
-        self.violation_count = 0  # Track number of safety violation examples
-        self.added = 0  # Counter for newly added examples in each call
+        self.buffer: List[LossExample] = []  # a min-heap
+        self.violation_count = 0
+        self.added = 0
+        self.added_indices = []
+        self.state_hashes = set()
+        
+    def _hash_state(self, state):
+        """Convert a state tensor to a hashable object."""
+        return hash(state.detach().cpu().numpy().tobytes())
+        
+    def contains_state(self, state):
+        """Check if a state is in the buffer."""
+        return self._hash_state(state) in self.state_hashes
 
     def add_examples(self, 
                 states: torch.Tensor, 
@@ -105,9 +115,14 @@ class CounterExampleBuffer:
             violation_mask: Bool tensor of shape (batch_size, K) indicating 
                            which examples violated safety constraints
             worst_percentile: Percentage of worst examples to add (default: 10%)
+                           
+        Returns:
+            List of indices of examples that were added to the buffer
         """
         self.added = 0
+        self.added_indices = []  # Reset the added indices list
         self._add_worst_examples(states, losses, violation_mask, worst_percentile)
+        return self.added_indices  # Return indices of added examples
 
     def _add_worst_examples(self, states, losses, violation_mask, worst_percentile):
         """
@@ -129,14 +144,25 @@ class CounterExampleBuffer:
         for idx in sorted_indices:
             if self.added >= n_examples:
                 break
-            else:
-                self._add_single_example(
-                    state=states[idx],
+            
+            # Get the state and its hash
+            state = states[idx]
+            state_hash = self._hash_state(state)
+            
+            # Only add if not already in buffer
+            if state_hash not in self.state_hashes:
+                added = self._add_single_example(
+                    state=state,
                     loss=losses[idx].item(),
-                    violated=violation_mask[idx].any().item()
+                    violated=violation_mask[idx].any().item(),
+                    state_hash=state_hash
                 )
+                
+                if added:
+                    # Store the index of the added example
+                    self.added_indices.append(idx.item())
 
-    def _add_single_example(self, state, loss, violated):
+    def _add_single_example(self, state, loss, violated, state_hash):
         """
         Add a single example to the buffer, maintaining heap property.
         
@@ -144,34 +170,38 @@ class CounterExampleBuffer:
             state: State tensor
             loss: Loss value
             violated: Whether this example violated safety constraints
+            state_hash: Hash of the state for efficient lookup
+            
+        Returns:
+            Boolean indicating whether the example was added
         """
-        # Create detached copy of state tensor
         processed_state = state.squeeze().clone().detach()
-        
-        # Create example object
         example = LossExample(
             state=processed_state,
             loss=loss,
             violated=violated
         )
-        
-        # If buffer isn't full, add example
         if len(self.buffer) < self.max_size:
             heapq.heappush(self.buffer, example)
             self.added += 1
             if violated:
                 self.violation_count += 1
+            self.state_hashes.add(state_hash)
+            
+            return True
         else:
-            # If buffer is full but new example has higher loss than minimum
             if loss > self.buffer[0].loss:
                 self.added += 1
-                # Update violation count
                 if self.buffer[0].violated and not violated:
                     self.violation_count -= 1
                 elif not self.buffer[0].violated and violated:
                     self.violation_count += 1
-                # Replace the minimum loss example
+                old_state_hash = self._hash_state(self.buffer[0].state)
+                self.state_hashes.discard(old_state_hash)
+                self.state_hashes.add(state_hash)
                 heapq.heapreplace(self.buffer, example)
+                return True
+        return False
 
     def get_violation_rate(self):
         """
@@ -205,17 +235,9 @@ class CounterExampleBuffer:
         """
         if not self.buffer:
             raise ValueError("Buffer is empty")
-            
-        # Sample at most batch_size examples
         n_samples = min(batch_size, len(self.buffer))
-        
-        # Calculate importance weights
         weights = [math.exp(alpha * example.loss) for example in self.buffer]
-        
-        # Sample with replacement according to weights
         sampled_indices = random.choices(range(len(self.buffer)), weights=weights, k=n_samples)
-        
-        # Collect states and losses
         states = torch.stack([self.buffer[idx].state for idx in sampled_indices])
         losses = torch.tensor([self.buffer[idx].loss for idx in sampled_indices])
         
@@ -225,6 +247,99 @@ class CounterExampleBuffer:
         """Return the current number of examples in the buffer."""
         return len(self.buffer)
 
+def generate_random_states(n, mean=None, std=None, device='cpu'):
+    """
+    Generate random states with a specified distribution.
+    
+    Args:
+        n: Number of states to generate
+        mean: Mean tensor for state distribution (optional)
+        std: Standard deviation tensor for state distribution (optional)
+        device: Device to create tensors on
+        
+    Returns:
+        Tensor of random states
+    """
+    if mean is None:
+        mean = torch.tensor([0.0, 0.0], device=device)
+    if std is None:
+        std = torch.tensor([50.0, 15.0], device=device)  # CTE in cm, HE in degrees
+        
+    random_states = torch.randn(n, 2, device=device)
+    random_states = random_states * std + mean
+    
+    return random_states
+
+class RandomExampleSet(torch.utils.data.Dataset):
+    """
+    A dataset class that allows removal and addition of states during training.
+    """
+    def __init__(self, states, device='cpu'):
+        """
+        Initialize the dataset with a tensor of states.
+        
+        Args:
+            states: Tensor of states with shape (n_samples, state_dim)
+            device: Device to store tensors on
+        """
+        self.states = states.to(device)
+        self.device = device
+        
+        # Calculate statistics for generating new random states
+        self.mean = states.mean(dim=0).to(device)
+        self.std = states.std(dim=0).to(device)
+        
+    def __len__(self):
+        return len(self.states)
+    
+    def __getitem__(self, idx):
+        return self.states[idx]
+    
+    def remove_states(self, indices):
+        """
+        Remove states at the specified indices.
+        
+        Args:
+            indices: List or tensor of indices to remove
+            
+        Returns:
+            Tensor of removed states
+        """
+        if len(indices) == 0:
+            return torch.zeros((0, self.states.size(1)), device=self.device)
+        if not isinstance(indices, torch.Tensor):
+            indices = torch.tensor(indices, device=self.device)
+        removed_states = self.states[indices].clone()
+        keep_mask = torch.ones(len(self.states), dtype=torch.bool, device=self.device)
+        keep_mask[indices] = False
+        self.states = self.states[keep_mask]
+        
+        return removed_states
+    
+    def add_states(self, new_states):
+        """
+        Add new states to the dataset.
+        
+        Args:
+            new_states: Tensor of states to add
+        """
+        if len(new_states) == 0:
+            return
+            
+        self.states = torch.cat([self.states, new_states.to(self.device)], dim=0)
+        
+    def generate_and_add_states(self, n):
+        """
+        Generate and add random states with distribution similar to original dataset.
+        
+        Args:
+            n: Number of states to generate and add
+        """
+        if n <= 0:
+            return
+            
+        new_states = generate_random_states(n, self.mean, self.std, self.device)
+        self.add_states(new_states)
 
 class KScheduler:
     def __init__(self, min = 5, max = 20, ramp_epochs = 30):

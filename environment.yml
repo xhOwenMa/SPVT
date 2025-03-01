@@ -1,0 +1,14 @@
+name: spvt
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - torch=2.0.0+cu118
+  - tensorboard=2.13.0
+  - colorama=0.4.6
+  - pip=24.2
+  - pip:
+    - git+https://github.com/Verified-Intelligence/auto_LiRPA.git

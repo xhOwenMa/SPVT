@@ -49,9 +49,9 @@ def compute_lp_reg(model, latent_ptb_tensor, X_batch, target_norm=1.0):
 
 
 def compute_reg(model, tol=0.5):
-    """ Computes regularization losses for bound_tightness, ReLU stability, and activation balance. """
+    """ Computes regularization losses for ReLU stability activation balance. """
     loss = torch.zeros(()).to(next(model.parameters()).device)
-    loss_tightness, loss_std, loss_relu = torch.zeros_like(loss), torch.zeros_like(loss), torch.zeros_like(loss)
+    loss_std, loss_relu = torch.zeros_like(loss), torch.zeros_like(loss)
     cnt = 0
     for name, module in model._modules.items():
         # if isinstance(module, BoundRelu) and name in names:
@@ -59,11 +59,9 @@ def compute_reg(model, tol=0.5):
             lower, upper = module.inputs[0].lower, module.inputs[0].upper
             center = (upper + lower) / 2
             diff = ((upper - lower) / 2)
-            tightness = diff.mean()
             mean_ = center.mean()
             std_ = center.std()
             
-            loss_tightness += F.relu(1.0 - tightness.clamp(min=1e-12))
             loss_std += F.relu(tol - std_) / tol
             
             mask_act, mask_inact = lower > 0, upper < 0
@@ -85,8 +83,7 @@ def compute_reg(model, tol=0.5):
             cnt += 1
     
     if cnt > 0:
-        loss_tightness /= cnt
         loss_std /= cnt
         loss_relu /= cnt
     
-    return loss_tightness + loss_std + loss_relu
+    return loss_std + loss_relu

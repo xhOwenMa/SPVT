@@ -28,7 +28,7 @@ def get_hyperparameters(parser):
     return parser
     
 def get_train_args(parser):
-    parser.add_argument('--pred_loss_step', type=int, default=4, help='step for prediction loss')
+    parser.add_argument('--pred_loss_step', type=int, default=1, help='step for prediction loss')
     parser.add_argument('--safety_loss_type', type=str, default='single_step', help='cumulative or barrier or single_step')
     parser.add_argument('--buffer_criteria', type=str, default='bound_gap', help='safety_loss or bound_gap')
     parser.add_argument('--buffer_size', type=int, default=4000, help='buffer size')
@@ -56,13 +56,15 @@ def get_args():
     parser = get_hyperparameters(parser)
     parser = get_train_args(parser)
 
+    # TODO: pretrained checkpoints can be found based on 'exp', but this is not implemented yet
     parser.add_argument('--gen_ckpt', type=str, default='model/pretrained_ckpts/mlp_generator.pth', help='pretrained generator checkpoint')
     parser.add_argument('--control_ckpt', type=str, default='model/pretrained_ckpts/pid_controller.pth', help='pretrained controller checkpoint')
-    parser.add_argument('--ckpt', type=str, default=None, help='checkpoint file timestamp')
+    parser.add_argument('--ckpt', type=str, default=None, help='spvt checkpoint file id')  # NOTE: this is really not useful...
     parser.add_argument('--device', type=str, default='cuda', help='device')
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     
-    parser.add_argument('--exp_setting', type=str, default='carla', help='carla or xplane')
+    # TODO: if running xplane experiments, need to adjust dynamics and action ranges; need to make this automatic
+    parser.add_argument('--exp', type=str, default='carla', help='carla or xplane')
 
     args = parser.parse_args()
 
@@ -82,6 +84,8 @@ def print_args_by_category(args):
     Args:
         args: Parsed arguments from get_args()
     """
+    import torch
+
     separator = "=" * 80
     
     # Run ID parameters
@@ -141,8 +145,8 @@ def print_args_by_category(args):
     # Other parameters
     print(separator)
     print("OTHER PARAMETERS:")
-    print(f"  device             : {args.device}")
+    print(f"  device             : {args.device} --- {torch.cuda.get_device_name() if torch.cuda.is_available() else 'CPU'}")
     print(f"  seed               : {args.seed}")
-    print(f"  exp_setting        : {args.exp_setting}")
+    print(f"  exp        : {args.exp}")
     print(separator)
     print()
