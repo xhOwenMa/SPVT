@@ -6,7 +6,7 @@ This repository contains the implementation of our paper "Learning Vision-Based 
 
 Check out our demo video for IROS 2025 submission:
 
-https://github.com/xhOwenMa/SPVT/assets/IROS2025Demo.mp4
+[![Watch the video](https://img.youtube.com/vi/ojoJi8951SU/1.jpg)](https://youtu.be/ojoJi8951SU)
 
 ## TODO Lists
 
