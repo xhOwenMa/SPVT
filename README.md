@@ -1,6 +1,6 @@
 # Learning Vision-Based Neural Network Controllers with Semi-Probabilistic Safety Guarantees
 
-This repository contains the implementation of our paper "Learning Vision-Based Neural Network Controllers with Semi-Probabilistic Safety Guarantees." Our approach integrates formal neural network verification tools into training for learning a controller with inherent safety guarantees.
+This repository contains the implementation of our paper ["Learning Vision-Based Neural Network Controllers with Semi-Probabilistic Safety Guarantees"](https://arxiv.org/abs/2503.00191). Our approach integrates formal neural network verification tools into training for learning a controller with inherent safety guarantees.
 
 ## DEMO Video
 
